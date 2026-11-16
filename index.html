@@ -315,7 +315,7 @@ async function toWav16k(blob){
   const ac = new AC();
   const buf = await new Promise((ok,bad)=>ac.decodeAudioData(arr, ok, bad));
   ac.close();
-  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration*16000)), 16000);
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration*8000)), 8000);
   const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
   const r = await off.startRendering();
   return { wav: wavFromPCM(r.getChannelData(0), 16000), sec: Math.round(buf.duration) };
