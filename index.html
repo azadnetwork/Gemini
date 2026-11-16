@@ -51,7 +51,6 @@
   #send{background:var(--accent);color:#fff;border:0;width:44px;height:44px;
     border-radius:12px;font-size:20px;cursor:pointer}
   #send:disabled{opacity:.5}
-  /* کشوی چت‌ها و تنظیمات */
   .ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10}
   .ov.on{display:flex}
   .sheet{background:var(--panel);width:min(88vw,360px);height:100%;
@@ -65,14 +64,11 @@
   .btn{margin:10px;padding:12px;border:0;border-radius:10px;background:var(--accent);
     color:#fff;font:inherit;cursor:pointer}
   .btn.gray{background:var(--line)}
-  .form{padding:14px;display:flex;flex-direction:column;gap:6px;overflow-y:auto}
+  .form{padding:14px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1}
   .form label{font-size:14px;color:var(--mute);margin-top:8px}
-  .form input{padding:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+  .form input,.form select{padding:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);
     border-radius:10px;font:inherit;direction:ltr;text-align:left;outline:none}
   .form small{color:var(--mute);line-height:1.8}
-  .form{flex:1}
-  .form select{padding:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);
-    border-radius:10px;font:inherit;direction:ltr;text-align:left;outline:none}
   .live{width:100%;height:100%;background:var(--bg);display:flex;flex-direction:column;
     padding-top:env(safe-area-inset-top)}
   .lhead{display:flex;align-items:center;gap:6px;padding:10px 12px;background:var(--panel);
@@ -167,23 +163,21 @@
 <script>
 const $ = id => document.getElementById(id);
 const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
-const DEFAULT_BASE  = 'https://generativelanguage.googleapis.com';
-const MAX_FILE  = 4 * 1024 * 1024;   // ۴ مگابایت
-const MAX_KEEP  = 16;                // تعداد پیام نگه‌داشته‌شده در هر چت
+const DEFAULT_BASE  = 'https://gemini.maximiloo90.workers.dev';
+const DEFAULT_BASE2 = 'https://generativelanguage.googleapis.com';
+const MAX_FILE  = 4 * 1024 * 1024;
+const MAX_KEEP  = 16;
 const MAX_CHATS = 20;
 
-// ---------- ذخیره‌سازی ----------
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
 let data = store.get('gc_data', null);
 if (!data || !data.sessions) data = { active: null, sessions: {} };
-const DEFAULT_BASE2 = 'https://gemini.maximiloo90.workers.dev';
 const savedCfg = store.get('gc_cfg', {});
 let cfg = Object.assign({ key:'', model:DEFAULT_MODEL, base:DEFAULT_BASE, base2:DEFAULT_BASE2,
   liveModel:'gemini-3.8-live', voice:'Zephyr' }, savedCfg);
-if (!('base2' in savedCfg)) { cfg.base = DEFAULT_BASE; cfg.base2 = DEFAULT_BASE2; store.set('gc_cfg', cfg); }
 let pending = null, busy = false;
 
 const save = () => store.set('gc_data', data);
@@ -202,7 +196,6 @@ if (!data.active || !data.sessions[data.active]) {
 }
 const cur = () => data.sessions[data.active];
 
-// ---------- نمایش ----------
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmt(t){
   let h = esc(t);
@@ -249,7 +242,6 @@ function renderList(){
 }
 function closeAll(){ stopLive(); document.querySelectorAll('.ov').forEach(o=>o.classList.remove('on')); }
 
-// ---------- تاریخ و ساعت ----------
 function dateInfo(){
   const now = new Date(), tz = 'Asia/Tehran';
   const g = new Intl.DateTimeFormat('en-US',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',
@@ -259,7 +251,6 @@ function dateInfo(){
   return `زمان و تقویم سیستم:\n- شمسی: ${j}\n- میلادی: ${g}`;
 }
 
-// ---------- پیوست ----------
 function toB64(file){
   return new Promise((ok,bad)=>{
     const r = new FileReader();
@@ -288,37 +279,13 @@ $('chipX').onclick = ()=>{
   pending = null; $('chip').style.display = 'none';
 };
 
-// ---------- ضبط صدا ----------
+// ---------- ضبط صدا (سبک و مستقیم بدون تبدیل WAV) ----------
 let rec = null;
 function fmtT(s){ return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
 function bufToB64(buf){
   const b = new Uint8Array(buf); let s = '';
   for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
   return btoa(s);
-}
-function wavFromPCM(f32, rate){
-  const n = f32.length, out = new ArrayBuffer(44 + n*2), v = new DataView(out);
-  const w = (o,t)=>{ for (let i=0;i<t.length;i++) v.setUint8(o+i, t.charCodeAt(i)); };
-  w(0,'RIFF'); v.setUint32(4, 36 + n*2, true); w(8,'WAVE'); w(12,'fmt ');
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
-  w(36,'data'); v.setUint32(40, n*2, true);
-  for (let i=0;i<n;i++){
-    const x = Math.max(-1, Math.min(1, f32[i]));
-    v.setInt16(44 + i*2, x < 0 ? x*0x8000 : x*0x7FFF, true);
-  }
-  return out;
-}
-async function toWav16k(blob){
-  const arr = await blob.arrayBuffer();
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const ac = new AC();
-  const buf = await new Promise((ok,bad)=>ac.decodeAudioData(arr, ok, bad));
-  ac.close();
-  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration*8000)), 8000);
-  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
-  const r = await off.startRendering();
-  return { wav: wavFromPCM(r.getChannelData(0), 16000), sec: Math.round(buf.duration) };
 }
 async function startRec(){
   if (busy) return;
@@ -340,7 +307,7 @@ async function startRec(){
   rec.timer = setInterval(()=>{
     const s = Math.floor((Date.now() - rec.t0) / 1000);
     $('chipTxt').textContent = '🔴 در حال ضبط... ' + fmtT(s);
-    if (s >= 120) stopRec();   // حداکثر ۲ دقیقه
+    if (s >= 120) stopRec();
   }, 250);
 }
 function stopRec(){ if (rec && rec.mr.state !== 'inactive') rec.mr.stop(); }
@@ -353,11 +320,13 @@ async function onRecStop(){
   if (r.cancel){ $('chip').style.display = 'none'; return; }
   $('chipTxt').textContent = '⏳ در حال آماده‌سازی...';
   try{
-    const blob = new Blob(r.chunks, { type: r.mr.mimeType || 'audio/webm' });
+    const mime = (r.mr.mimeType || 'audio/webm').split(';')[0];
+    const blob = new Blob(r.chunks, { type: mime });
     if (blob.size < 500) throw new Error('ضبط خیلی کوتاه بود.');
-    const { wav, sec } = await toWav16k(blob);
-    if (wav.byteLength > MAX_FILE) throw new Error('ضبط خیلی طولانیه.');
-    pending = { kind:'bin', mime:'audio/wav', data: bufToB64(wav), label:'🎤 صدای ضبط‌شده (' + fmtT(sec) + ')' };
+    if (blob.size > MAX_FILE) throw new Error('ضبط خیلی طولانیه.');
+    const sec = Math.max(1, Math.round((Date.now() - r.t0) / 1000));
+    const b64 = await toB64(blob);
+    pending = { kind:'bin', mime: mime, data: b64, label:'🎤 صدای ضبط‌شده (' + fmtT(sec) + ')' };
     $('chipTxt').textContent = pending.label;
   }catch(err){
     $('chip').style.display = 'none';
@@ -366,7 +335,7 @@ async function onRecStop(){
 }
 $('bMic').onclick = ()=>{ rec ? stopRec() : startRec(); };
 
-// ---------- تماس با Gemini (اول مسیر مستقیم، اگه نشد پل) ----------
+// ---------- تماس با Gemini ----------
 async function callGemini(body){
   const bases = [...new Set([cfg.base, cfg.base2].map(b => (b||'').trim().replace(/\/+$/,'')).filter(Boolean))];
   let lastErr = new Error('آدرس سرور خالیه');
@@ -453,7 +422,6 @@ async function send(){
   }
 }
 
-// ---------- رویدادها ----------
 $('send').onclick = send;
 $('inp').addEventListener('input', e=>{
   e.target.style.height = 'auto';
@@ -484,7 +452,6 @@ $('setSave').onclick = ()=>{
   store.set('gc_cfg', cfg); closeAll();
 };
 document.querySelectorAll('.ov').forEach(o=>o.addEventListener('click', e=>{ if (e.target === o) closeAll(); }));
-
 
 // ====================== گفتگوی صوتی زنده ======================
 const LIVE_MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview'];
@@ -654,7 +621,7 @@ async function startLive(){
     for (const m of models){
       liveStatus('⏳ در حال اتصال (' + m + ')...');
       try{ ws = await connectOnce(b, m); used = m; break outer; }
-      catch(e){ lastErr = e; if (e.kind === 'net') break; }   // خطای شبکه: امتحان مدل دیگه فایده نداره
+      catch(e){ lastErr = e; if (e.kind === 'net') break; }
     }
   }
   if (!ws){
