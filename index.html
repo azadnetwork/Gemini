@@ -70,6 +70,23 @@
   .form input{padding:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);
     border-radius:10px;font:inherit;direction:ltr;text-align:left;outline:none}
   .form small{color:var(--mute);line-height:1.8}
+  .form{flex:1}
+  .form select{padding:10px;background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:10px;font:inherit;direction:ltr;text-align:left;outline:none}
+  .live{width:100%;height:100%;background:var(--bg);display:flex;flex-direction:column;
+    padding-top:env(safe-area-inset-top)}
+  .lhead{display:flex;align-items:center;gap:6px;padding:10px 12px;background:var(--panel);
+    border-bottom:1px solid var(--line)}
+  .lhead b{flex:1}
+  #liveStat{padding:10px 14px;color:var(--mute);font-size:14px;text-align:center;line-height:1.8;white-space:pre-line}
+  #liveLog{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .lbar{display:flex;gap:10px;padding:14px;justify-content:center;background:var(--panel);
+    border-top:1px solid var(--line);padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+  .lbtn{flex:1;max-width:220px;padding:14px;border:0;border-radius:14px;font:inherit;
+    font-size:17px;color:#fff;background:var(--accent);cursor:pointer}
+  .lbtn.stop{background:var(--danger)}
+  .lbtn.gray{background:var(--line)}
+  .lbtn:disabled{opacity:.5}
 </style>
 </head>
 <body>
@@ -78,6 +95,7 @@
   <button class="ib" id="bMenu" title="چت‌ها">☰</button>
   <h1 id="ttl">چت جمنای</h1>
   <button class="ib" id="bNew" title="چت جدید">➕</button>
+  <button class="ib" id="bLive" title="گفتگوی صوتی زنده">📞</button>
   <button class="ib" id="bSet" title="تنظیمات">⚙️</button>
 </header>
 
@@ -109,16 +127,40 @@
     <div class="form">
       <label>کلید Gemini</label>
       <input id="fKey" type="password" placeholder="AIza..." autocomplete="off">
-      <label>نام مدل</label>
-      <input id="fModel">
+      <label>مدل چت متنی</label>
+      <select id="fModel">
+        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (پیش‌فرض)</option>
+        <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (جایگزین)</option>
+      </select>
+      <label>مدل گفتگوی صوتی زنده</label>
+      <select id="fLive">
+        <option value="gemini-3.8-live">gemini-3.8-live</option>
+        <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview</option>
+      </select>
+      <label>گوینده‌ی صدا</label>
+      <select id="fVoice"></select>
       <label>آدرس سرور اصلی</label>
       <input id="fBase">
       <label>آدرس جایگزین (پل)</label>
       <input id="fBase2" placeholder="https://...workers.dev">
+      <small>مدل چت متنی از پیام بعدی عوض می‌شه. مدل و گوینده‌ی صوتی از دفعه‌ی بعدی که گفتگوی زنده رو شروع کنی اعمال می‌شه.</small>
       <small>کلید فقط توی همین مرورگر روی گوشی خودت ذخیره می‌شه و جایی فرستاده نمی‌شه، جز خود سرور گوگل.</small>
     </div>
     <button class="btn" id="setSave">ذخیره</button>
     <button class="btn gray" id="setClose">بستن</button>
+  </div>
+</div>
+
+<!-- گفتگوی صوتی زنده -->
+<div class="ov" id="ovLive">
+  <div class="live">
+    <div class="lhead"><b>📞 گفتگوی صوتی زنده</b><button class="ib" id="liveClose">✕</button></div>
+    <div id="liveStat">آماده. دکمه‌ی شروع رو بزن.</div>
+    <div id="liveLog"></div>
+    <div class="lbar">
+      <button class="lbtn" id="liveBtn">🎙️ شروع</button>
+      <button class="lbtn gray" id="liveMute" style="display:none">🔇 بی‌صدا</button>
+    </div>
   </div>
 </div>
 
@@ -139,7 +181,8 @@ let data = store.get('gc_data', null);
 if (!data || !data.sessions) data = { active: null, sessions: {} };
 const DEFAULT_BASE2 = 'https://gemini.maximiloo90.workers.dev';
 const savedCfg = store.get('gc_cfg', {});
-let cfg = Object.assign({ key:'', model:DEFAULT_MODEL, base:DEFAULT_BASE, base2:DEFAULT_BASE2 }, savedCfg);
+let cfg = Object.assign({ key:'', model:DEFAULT_MODEL, base:DEFAULT_BASE, base2:DEFAULT_BASE2,
+  liveModel:'gemini-3.8-live', voice:'Zephyr' }, savedCfg);
 if (!('base2' in savedCfg)) { cfg.base = DEFAULT_BASE; cfg.base2 = DEFAULT_BASE2; store.set('gc_cfg', cfg); }
 let pending = null, busy = false;
 
@@ -204,7 +247,7 @@ function renderList(){
     l.appendChild(r);
   });
 }
-function closeAll(){ document.querySelectorAll('.ov').forEach(o=>o.classList.remove('on')); }
+function closeAll(){ stopLive(); document.querySelectorAll('.ov').forEach(o=>o.classList.remove('on')); }
 
 // ---------- تاریخ و ساعت ----------
 function dateInfo(){
@@ -420,7 +463,11 @@ $('bNew').onclick = ()=>{ newChat(); renderChat(); };
 $('listNew').onclick = ()=>{ newChat(); renderChat(); closeAll(); };
 $('bMenu').onclick = ()=>{ renderList(); $('ovList').classList.add('on'); };
 function openSet(){
-  $('fKey').value = cfg.key; $('fModel').value = cfg.model; $('fBase').value = cfg.base; $('fBase2').value = cfg.base2;
+  $('fKey').value = cfg.key;
+  ensureOpt($('fModel'), cfg.model); $('fModel').value = cfg.model;
+  ensureOpt($('fLive'), cfg.liveModel); $('fLive').value = cfg.liveModel;
+  ensureOpt($('fVoice'), cfg.voice); $('fVoice').value = cfg.voice;
+  $('fBase').value = cfg.base; $('fBase2').value = cfg.base2;
   $('ovSet').classList.add('on');
 }
 $('bSet').onclick = openSet;
@@ -428,13 +475,233 @@ $('setClose').onclick = closeAll;
 $('setSave').onclick = ()=>{
   cfg = {
     key: $('fKey').value.trim(),
-    model: $('fModel').value.trim() || DEFAULT_MODEL,
+    model: $('fModel').value || DEFAULT_MODEL,
+    liveModel: $('fLive').value || 'gemini-3.8-live',
+    voice: $('fVoice').value || 'Zephyr',
     base: $('fBase').value.trim() || DEFAULT_BASE,
     base2: $('fBase2').value.trim()
   };
   store.set('gc_cfg', cfg); closeAll();
 };
 document.querySelectorAll('.ov').forEach(o=>o.addEventListener('click', e=>{ if (e.target === o) closeAll(); }));
+
+
+// ====================== گفتگوی صوتی زنده ======================
+const LIVE_MODELS = ['gemini-3.8-live', 'gemini-3.1-flash-live-preview'];
+const VOICES = [
+  ['Zephyr','روشن'],['Puck','سرحال'],['Charon','آموزنده'],['Kore','محکم'],['Fenrir','پرشور'],
+  ['Leda','جوان'],['Orus','محکم'],['Aoede','سبک'],['Callirrhoe','راحت'],['Autonoe','روشن'],
+  ['Enceladus','نفس‌دار'],['Iapetus','شفاف'],['Umbriel','راحت'],['Algieba','نرم'],['Despina','نرم'],
+  ['Erinome','شفاف'],['Algenib','خش‌دار'],['Rasalgethi','آموزنده'],['Laomedeia','سرحال'],
+  ['Achernar','ملایم'],['Alnilam','محکم'],['Schedar','یکنواخت'],['Gacrux','باتجربه'],
+  ['Pulcherrima','قاطع'],['Achird','دوستانه'],['Zubenelgenubi','خودمونی'],['Vindemiatrix','آرام'],
+  ['Sadachbia','پرجنب‌وجوش'],['Sadaltager','دانا'],['Sulafat','گرم']
+];
+function ensureOpt(sel, val){
+  if (!val) return;
+  if (![...sel.options].some(o => o.value === val)){
+    const o = document.createElement('option'); o.value = val; o.textContent = val; sel.appendChild(o);
+  }
+}
+VOICES.forEach(([n, d])=>{
+  const o = document.createElement('option'); o.value = n; o.textContent = n + ' — ' + d;
+  $('fVoice').appendChild(o);
+});
+
+let live = null;
+let liveBusy = false;
+
+function liveStatus(t){ $('liveStat').textContent = t; }
+function f32ToI16(f){
+  const o = new Int16Array(f.length);
+  for (let i = 0; i < f.length; i++){
+    const x = Math.max(-1, Math.min(1, f[i]));
+    o[i] = x < 0 ? x * 0x8000 : x * 0x7FFF;
+  }
+  return o;
+}
+function downsample(f, inRate, outRate){
+  if (inRate === outRate) return f;
+  const ratio = inRate / outRate, n = Math.floor(f.length / ratio), o = new Float32Array(n);
+  for (let i = 0; i < n; i++){
+    const a = Math.floor(i * ratio), b = Math.min(f.length, Math.floor((i + 1) * ratio));
+    let sum = 0; for (let j = a; j < b; j++) sum += f[j];
+    o[i] = sum / Math.max(1, b - a);
+  }
+  return o;
+}
+async function parseMsg(d){
+  try{
+    if (typeof d !== 'string') d = await d.text();
+    return JSON.parse(d);
+  }catch(e){ return null; }
+}
+function setupMsg(model){
+  return { setup: {
+    model: 'models/' + model,
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: cfg.voice } } }
+    },
+    systemInstruction: { parts: [{ text: 'تو یک دستیار صوتی هوشمند، دقیق و مؤدب هستی. کوتاه و روان جواب بده.\n' + dateInfo() }] },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {}
+  }};
+}
+function connectOnce(base, model){
+  return new Promise((ok, bad)=>{
+    let opened = false, done = false, ws;
+    const url = base.replace(/^http/, 'ws').replace(/\/+$/, '') +
+      '/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=' + encodeURIComponent(cfg.key);
+    try{ ws = new WebSocket(url); }catch(e){ return bad({ kind:'net', msg:e.message }); }
+    const fail = (kind, msg)=>{
+      if (done) return; done = true; clearTimeout(tm);
+      try{ ws.close(); }catch(e){}
+      bad({ kind, msg });
+    };
+    const tm = setTimeout(()=>fail(opened ? 'setup' : 'net', 'زمان اتصال تموم شد'), 10000);
+    ws.onopen = ()=>{ opened = true; ws.send(JSON.stringify(setupMsg(model))); };
+    ws.onerror = ()=>fail(opened ? 'setup' : 'net', 'اتصال برقرار نشد');
+    ws.onclose = e=>fail(opened ? 'setup' : 'net', e.reason || ('اتصال بسته شد (' + e.code + ')'));
+    ws.onmessage = async ev=>{
+      const m = await parseMsg(ev.data);
+      if (m && m.setupComplete && !done){ done = true; clearTimeout(tm); ok(ws); }
+    };
+  });
+}
+
+function liveAppend(kind, text){
+  if (!live) return;
+  const key = kind === 'in' ? 'curIn' : 'curOut';
+  if (!live[key]){
+    const d = document.createElement('div');
+    d.className = 'b ' + (kind === 'in' ? 'user' : 'model');
+    $('liveLog').appendChild(d); live[key] = d;
+  }
+  live[key].textContent += text;
+  $('liveLog').scrollTop = $('liveLog').scrollHeight;
+}
+function playPcm(b64){
+  const L = live; if (!L) return;
+  const bin = atob(b64), n = bin.length >> 1;
+  const buf = L.ctxOut.createBuffer(1, n, 24000), ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++){
+    let v = bin.charCodeAt(2*i) | (bin.charCodeAt(2*i + 1) << 8);
+    if (v >= 0x8000) v -= 0x10000;
+    ch[i] = v / 32768;
+  }
+  const src = L.ctxOut.createBufferSource();
+  src.buffer = buf; src.connect(L.ctxOut.destination);
+  const t = Math.max(L.ctxOut.currentTime + 0.02, L.nextT);
+  src.start(t); L.nextT = t + buf.duration;
+  L.sources.add(src); src.onended = ()=>L.sources.delete(src);
+}
+function stopPlayback(){
+  if (!live) return;
+  live.sources.forEach(s=>{ try{ s.stop(); }catch(e){} });
+  live.sources.clear(); live.nextT = 0;
+}
+function handleLive(m){
+  const sc = m.serverContent;
+  if (sc){
+    if (sc.interrupted) stopPlayback();
+    const parts = sc.modelTurn && sc.modelTurn.parts;
+    if (parts) for (const p of parts){
+      if (p.inlineData && p.inlineData.data){ playPcm(p.inlineData.data); liveStatus('🔊 داره جواب می‌ده...'); }
+    }
+    if (sc.inputTranscription && sc.inputTranscription.text) liveAppend('in', sc.inputTranscription.text);
+    if (sc.outputTranscription && sc.outputTranscription.text) liveAppend('out', sc.outputTranscription.text);
+    if (sc.turnComplete && live){ live.curIn = null; live.curOut = null; liveStatus('🟢 گوش می‌دم...'); }
+  }
+  if (m.goAway) liveStatus('⚠️ سرور به‌زودی اتصال رو قطع می‌کنه.');
+}
+function resetLiveUi(){
+  $('liveBtn').textContent = '🎙️ شروع'; $('liveBtn').classList.remove('stop'); $('liveBtn').disabled = false;
+  $('liveMute').style.display = 'none'; $('liveMute').textContent = '🔇 بی‌صدا';
+}
+function stopLive(note){
+  const L = live; live = null;
+  if (L){
+    try{ L.proc.disconnect(); L.src.disconnect(); }catch(e){}
+    try{ L.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    L.sources.forEach(s=>{ try{ s.stop(); }catch(e){} });
+    try{ L.ctxIn.close(); L.ctxOut.close(); }catch(e){}
+    try{ L.ws.onclose = null; L.ws.close(); }catch(e){}
+  }
+  resetLiveUi();
+  if (note) liveStatus(note);
+}
+async function startLive(){
+  if (live || liveBusy) return;
+  if (!cfg.key){ closeAll(); openSet(); return; }
+  if (!navigator.mediaDevices || !window.WebSocket){ liveStatus('❌ این مرورگر پشتیبانی نمی‌کنه.'); return; }
+  liveBusy = true; $('liveBtn').disabled = true;
+  liveStatus('⏳ درخواست میکروفن...');
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    });
+  }catch(e){
+    liveStatus('❌ اجازه‌ی میکروفن داده نشد.'); liveBusy = false; $('liveBtn').disabled = false; return;
+  }
+
+  const bases = [...new Set([cfg.base, cfg.base2].map(b=>(b||'').trim()).filter(Boolean))];
+  const models = [cfg.liveModel, ...LIVE_MODELS.filter(m=>m !== cfg.liveModel)];
+  let ws = null, used = '', lastErr = { msg:'آدرس سرور خالیه' };
+  outer:
+  for (const b of bases){
+    for (const m of models){
+      liveStatus('⏳ در حال اتصال (' + m + ')...');
+      try{ ws = await connectOnce(b, m); used = m; break outer; }
+      catch(e){ lastErr = e; if (e.kind === 'net') break; }   // خطای شبکه: امتحان مدل دیگه فایده نداره
+    }
+  }
+  if (!ws){
+    stream.getTracks().forEach(t=>t.stop());
+    liveStatus('❌ وصل نشد: ' + lastErr.msg);
+    liveBusy = false; $('liveBtn').disabled = false; return;
+  }
+
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let ctxIn; try{ ctxIn = new AC({ sampleRate:16000 }); }catch(e){ ctxIn = new AC(); }
+  const ctxOut = new AC();
+  try{ await ctxIn.resume(); await ctxOut.resume(); }catch(e){}
+  const src = ctxIn.createMediaStreamSource(stream);
+  const proc = ctxIn.createScriptProcessor(2048, 1, 1);
+  const L = { ws, stream, ctxIn, ctxOut, src, proc, nextT:0, sources:new Set(), curIn:null, curOut:null, muted:false };
+  live = L;
+
+  proc.onaudioprocess = e=>{
+    if (live !== L || L.muted || ws.readyState !== 1) return;
+    const f = downsample(e.inputBuffer.getChannelData(0), ctxIn.sampleRate, 16000);
+    ws.send(JSON.stringify({ realtimeInput:{ audio:{
+      data: bufToB64(f32ToI16(f).buffer), mimeType:'audio/pcm;rate=16000' } } }));
+  };
+  src.connect(proc); proc.connect(ctxIn.destination);
+
+  ws.onmessage = async ev=>{ const m = await parseMsg(ev.data); if (m && live === L) handleLive(m); };
+  ws.onerror = ()=>{};
+  ws.onclose = e=>{ if (live === L) stopLive('🔌 اتصال قطع شد' + (e.reason ? ': ' + e.reason : '') + '. دوباره شروع کن.'); };
+
+  $('liveLog').innerHTML = '';
+  $('liveBtn').textContent = '⏹ پایان'; $('liveBtn').classList.add('stop'); $('liveBtn').disabled = false;
+  $('liveMute').style.display = 'block';
+  liveStatus('🟢 وصل شد (' + used + ' / ' + cfg.voice + ') — حرف بزن' +
+    (used !== cfg.liveModel ? '\n⚠️ مدل انتخابی کار نکرد، مدل جایگزین استفاده شد.' : ''));
+  liveBusy = false;
+}
+
+$('bLive').onclick = ()=>{ $('ovLive').classList.add('on'); };
+$('liveClose').onclick = closeAll;
+$('liveBtn').onclick = ()=>{ live ? stopLive('پایان یافت. برای شروع دوباره، دکمه رو بزن.') : startLive(); };
+$('liveMute').onclick = ()=>{
+  if (!live) return;
+  live.muted = !live.muted;
+  $('liveMute').textContent = live.muted ? '🎙️ باز کردن' : '🔇 بی‌صدا';
+  if (live.muted && live.ws.readyState === 1) live.ws.send(JSON.stringify({ realtimeInput:{ audioStreamEnd:true } }));
+  liveStatus(live.muted ? '🔇 میکروفن بسته‌ست' : '🟢 گوش می‌دم...');
+};
 
 renderChat();
 if (!cfg.key) openSet();
