@@ -26,6 +26,7 @@
   .ib{background:none;border:0;color:var(--text);font-size:20px;
     width:40px;height:40px;border-radius:10px;cursor:pointer}
   .ib:active{background:var(--line)}
+  .ib.rec{background:var(--danger)}
   #msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
   .b{max-width:88%;padding:10px 13px;border-radius:14px;line-height:1.9;
     word-wrap:break-word;overflow-wrap:anywhere}
@@ -86,6 +87,7 @@
 
 <div class="bar">
   <button class="ib" id="bAtt" title="پیوست">📎</button>
+  <button class="ib" id="bMic" title="ضبط صدا">🎤</button>
   <textarea id="inp" rows="1" placeholder="پیامت رو بنویس..."></textarea>
   <button id="send">➤</button>
 </div>
@@ -226,7 +228,7 @@ function toB64(file){
 $('bAtt').onclick = ()=>$('file').click();
 $('file').onchange = async e=>{
   const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
+  if (!f || rec) return;
   if (f.size > MAX_FILE){ bubble('err','حجم فایل باید کمتر از ۴ مگابایت باشه.'); return; }
   const t = f.type || '';
   try{
@@ -238,7 +240,88 @@ $('file').onchange = async e=>{
     $('chip').style.display = 'flex';
   }catch(err){ bubble('err', err.message); }
 };
-$('chipX').onclick = ()=>{ pending = null; $('chip').style.display = 'none'; };
+$('chipX').onclick = ()=>{
+  if (rec){ rec.cancel = true; stopRec(); return; }
+  pending = null; $('chip').style.display = 'none';
+};
+
+// ---------- ضبط صدا ----------
+let rec = null;
+function fmtT(s){ return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+function bufToB64(buf){
+  const b = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function wavFromPCM(f32, rate){
+  const n = f32.length, out = new ArrayBuffer(44 + n*2), v = new DataView(out);
+  const w = (o,t)=>{ for (let i=0;i<t.length;i++) v.setUint8(o+i, t.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4, 36 + n*2, true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40, n*2, true);
+  for (let i=0;i<n;i++){
+    const x = Math.max(-1, Math.min(1, f32[i]));
+    v.setInt16(44 + i*2, x < 0 ? x*0x8000 : x*0x7FFF, true);
+  }
+  return out;
+}
+async function toWav16k(blob){
+  const arr = await blob.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  const buf = await new Promise((ok,bad)=>ac.decodeAudioData(arr, ok, bad));
+  ac.close();
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration*16000)), 16000);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const r = await off.startRendering();
+  return { wav: wavFromPCM(r.getChannelData(0), 16000), sec: Math.round(buf.duration) };
+}
+async function startRec(){
+  if (busy) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder){
+    bubble('err','این مرورگر ضبط صدا رو پشتیبانی نمی‌کنه.'); return;
+  }
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio:true }); }
+  catch(e){ bubble('err','اجازه‌ی میکروفن داده نشد. از تنظیمات مرورگر اجازه بده.'); return; }
+  const mr = new MediaRecorder(stream);
+  rec = { mr, chunks:[], stream, t0:Date.now(), cancel:false, timer:null };
+  mr.ondataavailable = e=>{ if (e.data && e.data.size) rec.chunks.push(e.data); };
+  mr.onstop = onRecStop;
+  mr.start();
+  pending = null;
+  $('bMic').classList.add('rec'); $('bMic').textContent = '⏹';
+  $('chip').style.display = 'flex';
+  $('chipTxt').textContent = '🔴 در حال ضبط... 0:00';
+  rec.timer = setInterval(()=>{
+    const s = Math.floor((Date.now() - rec.t0) / 1000);
+    $('chipTxt').textContent = '🔴 در حال ضبط... ' + fmtT(s);
+    if (s >= 120) stopRec();   // حداکثر ۲ دقیقه
+  }, 250);
+}
+function stopRec(){ if (rec && rec.mr.state !== 'inactive') rec.mr.stop(); }
+async function onRecStop(){
+  const r = rec;
+  clearInterval(r.timer);
+  r.stream.getTracks().forEach(t=>t.stop());
+  $('bMic').classList.remove('rec'); $('bMic').textContent = '🎤';
+  rec = null;
+  if (r.cancel){ $('chip').style.display = 'none'; return; }
+  $('chipTxt').textContent = '⏳ در حال آماده‌سازی...';
+  try{
+    const blob = new Blob(r.chunks, { type: r.mr.mimeType || 'audio/webm' });
+    if (blob.size < 500) throw new Error('ضبط خیلی کوتاه بود.');
+    const { wav, sec } = await toWav16k(blob);
+    if (wav.byteLength > MAX_FILE) throw new Error('ضبط خیلی طولانیه.');
+    pending = { kind:'bin', mime:'audio/wav', data: bufToB64(wav), label:'🎤 صدای ضبط‌شده (' + fmtT(sec) + ')' };
+    $('chipTxt').textContent = pending.label;
+  }catch(err){
+    $('chip').style.display = 'none';
+    bubble('err', 'ضبط صدا آماده نشد: ' + err.message);
+  }
+}
+$('bMic').onclick = ()=>{ rec ? stopRec() : startRec(); };
 
 // ---------- تماس با Gemini (اول مسیر مستقیم، اگه نشد پل) ----------
 async function callGemini(body){
@@ -266,7 +349,7 @@ async function callGemini(body){
 
 // ---------- ارسال ----------
 async function send(){
-  if (busy) return;
+  if (busy || rec) return;
   const text = $('inp').value.trim();
   if (!text && !pending) return;
   if (!cfg.key){ openSet(); return; }
