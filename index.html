@@ -372,7 +372,7 @@ async function callGemini(body){
   let lastErr = new Error('آدرس سرور خالیه');
   for (let i = 0; i < bases.length; i++){
     const ctl = new AbortController();
-    const tm = setTimeout(()=>ctl.abort(), 30000);
+    const tm = setTimeout(()=>ctl.abort(), 60000);
     try{
       const res = await fetch(`${bases[i]}/v1beta/models/${cfg.model}:generateContent`, {
         method:'POST', signal: ctl.signal,
