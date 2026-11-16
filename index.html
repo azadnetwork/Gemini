@@ -109,8 +109,10 @@
       <input id="fKey" type="password" placeholder="AIza..." autocomplete="off">
       <label>نام مدل</label>
       <input id="fModel">
-      <label>آدرس سرور</label>
+      <label>آدرس سرور اصلی</label>
       <input id="fBase">
+      <label>آدرس جایگزین (پل)</label>
+      <input id="fBase2" placeholder="https://...workers.dev">
       <small>کلید فقط توی همین مرورگر روی گوشی خودت ذخیره می‌شه و جایی فرستاده نمی‌شه، جز خود سرور گوگل.</small>
     </div>
     <button class="btn" id="setSave">ذخیره</button>
@@ -133,7 +135,10 @@ const store = {
 };
 let data = store.get('gc_data', null);
 if (!data || !data.sessions) data = { active: null, sessions: {} };
-let cfg = Object.assign({ key:'', model:DEFAULT_MODEL, base:DEFAULT_BASE }, store.get('gc_cfg', {}));
+const DEFAULT_BASE2 = 'https://gemini.maximiloo90.workers.dev';
+const savedCfg = store.get('gc_cfg', {});
+let cfg = Object.assign({ key:'', model:DEFAULT_MODEL, base:DEFAULT_BASE, base2:DEFAULT_BASE2 }, savedCfg);
+if (!('base2' in savedCfg)) { cfg.base = DEFAULT_BASE; cfg.base2 = DEFAULT_BASE2; store.set('gc_cfg', cfg); }
 let pending = null, busy = false;
 
 const save = () => store.set('gc_data', data);
@@ -235,6 +240,30 @@ $('file').onchange = async e=>{
 };
 $('chipX').onclick = ()=>{ pending = null; $('chip').style.display = 'none'; };
 
+// ---------- تماس با Gemini (اول مسیر مستقیم، اگه نشد پل) ----------
+async function callGemini(body){
+  const bases = [...new Set([cfg.base, cfg.base2].map(b => (b||'').trim().replace(/\/+$/,'')).filter(Boolean))];
+  let lastErr = new Error('آدرس سرور خالیه');
+  for (let i = 0; i < bases.length; i++){
+    const ctl = new AbortController();
+    const tm = setTimeout(()=>ctl.abort(), 30000);
+    try{
+      const res = await fetch(`${bases[i]}/v1beta/models/${cfg.model}:generateContent`, {
+        method:'POST', signal: ctl.signal,
+        headers:{ 'Content-Type':'application/json', 'x-goog-api-key': cfg.key },
+        body
+      });
+      clearTimeout(tm);
+      if (res.status >= 500 && i < bases.length - 1){ lastErr = new Error('خطای سرور ' + res.status); continue; }
+      return res;
+    }catch(e){
+      clearTimeout(tm);
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
 // ---------- ارسال ----------
 async function send(){
   if (busy) return;
@@ -268,15 +297,10 @@ async function send(){
   contents.push({ role:'user', parts });
 
   try{
-    const url = `${cfg.base.replace(/\/+$/,'')}/v1beta/models/${cfg.model}:generateContent`;
-    const res = await fetch(url, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'x-goog-api-key': cfg.key },
-      body: JSON.stringify({
-        systemInstruction:{ parts:[{ text:`تو یک دستیار هوشمند، دقیق و مؤدب هستی.\n${dateInfo()}` }] },
-        contents
-      })
-    });
+    const res = await callGemini(JSON.stringify({
+      systemInstruction:{ parts:[{ text:`تو یک دستیار هوشمند، دقیق و مؤدب هستی.\n${dateInfo()}` }] },
+      contents
+    }));
     if (!res.ok){
       const t = await res.text();
       wait.remove();
@@ -313,7 +337,7 @@ $('bNew').onclick = ()=>{ newChat(); renderChat(); };
 $('listNew').onclick = ()=>{ newChat(); renderChat(); closeAll(); };
 $('bMenu').onclick = ()=>{ renderList(); $('ovList').classList.add('on'); };
 function openSet(){
-  $('fKey').value = cfg.key; $('fModel').value = cfg.model; $('fBase').value = cfg.base;
+  $('fKey').value = cfg.key; $('fModel').value = cfg.model; $('fBase').value = cfg.base; $('fBase2').value = cfg.base2;
   $('ovSet').classList.add('on');
 }
 $('bSet').onclick = openSet;
@@ -322,7 +346,8 @@ $('setSave').onclick = ()=>{
   cfg = {
     key: $('fKey').value.trim(),
     model: $('fModel').value.trim() || DEFAULT_MODEL,
-    base: $('fBase').value.trim() || DEFAULT_BASE
+    base: $('fBase').value.trim() || DEFAULT_BASE,
+    base2: $('fBase2').value.trim()
   };
   store.set('gc_cfg', cfg); closeAll();
 };
